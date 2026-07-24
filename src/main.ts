@@ -1,8 +1,9 @@
 import './style.css'
 import { initWebGPU } from './webgpu/context'
 import { createRenderPipeline } from './webgpu/renderPipeline'
-import { createComputePipeline, createStorageTexture } from './webgpu/computePipeline'
-import fillWGSL from './shaders/fill.wgsl?raw'
+import { createComputePipeline } from './webgpu/computePipeline'
+import { Field } from './sim/field'
+import incrementWGSL from './shaders/increment.wgsl?raw'
 
 const SIM_WIDTH = 512
 const SIM_HEIGHT = 512
@@ -33,40 +34,37 @@ async function main() {
   }
 
   const renderPipeline = createRenderPipeline(device, format)
-  const computePipeline = createComputePipeline(device, fillWGSL)
+  const incrementPipeline = createComputePipeline(device, incrementWGSL)
 
-  const patternTexture = createStorageTexture(device, SIM_WIDTH, SIM_HEIGHT)
-  const patternTextureView = patternTexture.createView()
-
+  const field = new Field(device, SIM_WIDTH, SIM_HEIGHT)
   const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
-
-  const computeBindGroup = device.createBindGroup({
-    layout: computePipeline.getBindGroupLayout(0),
-    entries: [{ binding: 0, resource: patternTextureView }],
-  })
-
-  const renderBindGroup = device.createBindGroup({
-    layout: renderPipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: patternTextureView },
-      { binding: 1, resource: sampler },
-    ],
-  })
-
-  // Pattern is static, so we only need to run the compute pass once.
-  {
-    const encoder = device.createCommandEncoder()
-    const pass = encoder.beginComputePass()
-    pass.setPipeline(computePipeline)
-    pass.setBindGroup(0, computeBindGroup)
-    pass.dispatchWorkgroups(Math.ceil(SIM_WIDTH / 8), Math.ceil(SIM_HEIGHT / 8))
-    pass.end()
-    device.queue.submit([encoder.finish()])
-  }
 
   function frame() {
     const encoder = device.createCommandEncoder()
-    const pass = encoder.beginRenderPass({
+
+    const computeBindGroup = device.createBindGroup({
+      layout: incrementPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: field.read.createView() },
+        { binding: 1, resource: field.write.createView() },
+      ],
+    })
+    const computePass = encoder.beginComputePass()
+    computePass.setPipeline(incrementPipeline)
+    computePass.setBindGroup(0, computeBindGroup)
+    computePass.dispatchWorkgroups(Math.ceil(SIM_WIDTH / 8), Math.ceil(SIM_HEIGHT / 8))
+    computePass.end()
+
+    field.swap()
+
+    const renderBindGroup = device.createBindGroup({
+      layout: renderPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: field.read.createView() },
+        { binding: 1, resource: sampler },
+      ],
+    })
+    const renderPass = encoder.beginRenderPass({
       colorAttachments: [
         {
           view: context.getCurrentTexture().createView(),
@@ -76,10 +74,11 @@ async function main() {
         },
       ],
     })
-    pass.setPipeline(renderPipeline)
-    pass.setBindGroup(0, renderBindGroup)
-    pass.draw(3)
-    pass.end()
+    renderPass.setPipeline(renderPipeline)
+    renderPass.setBindGroup(0, renderBindGroup)
+    renderPass.draw(3)
+    renderPass.end()
+
     device.queue.submit([encoder.finish()])
     requestAnimationFrame(frame)
   }
