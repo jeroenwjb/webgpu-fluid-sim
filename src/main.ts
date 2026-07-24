@@ -4,11 +4,18 @@ import { createRenderPipeline } from './webgpu/renderPipeline'
 import { Field } from './sim/field'
 import { SplatPass } from './sim/splat'
 import { AdvectPass } from './sim/advect'
+import { DiffusionPass } from './sim/diffusion'
 
 const SIM_WIDTH = 512
 const SIM_HEIGHT = 512
 const DT = 1 / 60
 const ANGULAR_SPEED = 1.5
+
+// alpha/rBeta for the Jacobi diffusion solve: alpha = dx^2 / (viscosity * dt), rBeta = 1 / (alpha + 4).
+const DIFFUSION_VISCOSITY = 8
+const DIFFUSION_ALPHA = 1 / (DIFFUSION_VISCOSITY * DT)
+const DIFFUSION_RBETA = 1 / (DIFFUSION_ALPHA + 4)
+const DIFFUSION_ITERATIONS = 25
 
 const canvas = document.querySelector<HTMLCanvasElement>('#fluid-canvas')!
 const fallback = document.querySelector<HTMLDivElement>('#webgpu-fallback')!
@@ -38,6 +45,7 @@ async function main() {
   const renderPipeline = createRenderPipeline(device, format)
   const splatPass = new SplatPass(device)
   const advectPass = new AdvectPass(device)
+  const diffusionPass = new DiffusionPass(device, SIM_WIDTH, SIM_HEIGHT)
 
   const field = new Field(device, SIM_WIDTH, SIM_HEIGHT)
   const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
@@ -59,6 +67,11 @@ async function main() {
   function frame() {
     const encoder = device.createCommandEncoder()
 
+    diffusionPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, {
+      alpha: DIFFUSION_ALPHA,
+      rBeta: DIFFUSION_RBETA,
+      iterations: DIFFUSION_ITERATIONS,
+    })
     advectPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, { dt: DT, angularSpeed: ANGULAR_SPEED })
 
     const renderBindGroup = device.createBindGroup({

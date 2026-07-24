@@ -9,7 +9,7 @@ export class Field {
     height: number,
     format: GPUTextureFormat = 'rgba16float',
   ) {
-    const usage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+    const usage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
     this.textureA = device.createTexture({ size: { width, height }, format, usage })
     this.textureB = device.createTexture({ size: { width, height }, format, usage })
   }
