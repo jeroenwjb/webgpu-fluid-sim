@@ -1,6 +1,11 @@
 import './style.css'
 import { initWebGPU } from './webgpu/context'
 import { createRenderPipeline } from './webgpu/renderPipeline'
+import { createComputePipeline, createStorageTexture } from './webgpu/computePipeline'
+import fillWGSL from './shaders/fill.wgsl?raw'
+
+const SIM_WIDTH = 512
+const SIM_HEIGHT = 512
 
 const canvas = document.querySelector<HTMLCanvasElement>('#fluid-canvas')!
 const fallback = document.querySelector<HTMLDivElement>('#webgpu-fallback')!
@@ -27,7 +32,37 @@ async function main() {
     return
   }
 
-  const pipeline = createRenderPipeline(device, format)
+  const renderPipeline = createRenderPipeline(device, format)
+  const computePipeline = createComputePipeline(device, fillWGSL)
+
+  const patternTexture = createStorageTexture(device, SIM_WIDTH, SIM_HEIGHT)
+  const patternTextureView = patternTexture.createView()
+
+  const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
+
+  const computeBindGroup = device.createBindGroup({
+    layout: computePipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: patternTextureView }],
+  })
+
+  const renderBindGroup = device.createBindGroup({
+    layout: renderPipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: patternTextureView },
+      { binding: 1, resource: sampler },
+    ],
+  })
+
+  // Pattern is static, so we only need to run the compute pass once.
+  {
+    const encoder = device.createCommandEncoder()
+    const pass = encoder.beginComputePass()
+    pass.setPipeline(computePipeline)
+    pass.setBindGroup(0, computeBindGroup)
+    pass.dispatchWorkgroups(Math.ceil(SIM_WIDTH / 8), Math.ceil(SIM_HEIGHT / 8))
+    pass.end()
+    device.queue.submit([encoder.finish()])
+  }
 
   function frame() {
     const encoder = device.createCommandEncoder()
@@ -41,7 +76,8 @@ async function main() {
         },
       ],
     })
-    pass.setPipeline(pipeline)
+    pass.setPipeline(renderPipeline)
+    pass.setBindGroup(0, renderBindGroup)
     pass.draw(3)
     pass.end()
     device.queue.submit([encoder.finish()])
