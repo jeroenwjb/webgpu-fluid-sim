@@ -5,6 +5,7 @@ import { Field } from './sim/field'
 import { SplatPass } from './sim/splat'
 import { AdvectPass } from './sim/advect'
 import { DiffusionPass } from './sim/diffusion'
+import { DivergenceDebug } from './sim/divergenceDebug'
 
 const SIM_WIDTH = 512
 const SIM_HEIGHT = 512
@@ -46,9 +47,17 @@ async function main() {
   const splatPass = new SplatPass(device)
   const advectPass = new AdvectPass(device)
   const diffusionPass = new DiffusionPass(device, SIM_WIDTH, SIM_HEIGHT)
+  const divergenceDebug = new DivergenceDebug(device, SIM_WIDTH, SIM_HEIGHT)
 
   const field = new Field(device, SIM_WIDTH, SIM_HEIGHT)
   const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
+
+  let debugMode: 1 | 2 | 3 = 1
+  window.addEventListener('keydown', (e) => {
+    if (e.key === '1' || e.key === '2' || e.key === '3') {
+      debugMode = Number(e.key) as 1 | 2 | 3
+    }
+  })
 
   // Splat is additive, so we only apply it once into an otherwise-static field.
   // Placed off-center so the rotation (velocity is zero at the center) is visible.
@@ -74,10 +83,17 @@ async function main() {
     })
     advectPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, { dt: DT, angularSpeed: ANGULAR_SPEED })
 
+    const displayView =
+      debugMode === 1
+        ? field.read.createView()
+        : debugMode === 2
+          ? divergenceDebug.rotationDivergenceView
+          : divergenceDebug.radialDivergenceView
+
     const renderBindGroup = device.createBindGroup({
       layout: renderPipeline.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: field.read.createView() },
+        { binding: 0, resource: displayView },
         { binding: 1, resource: sampler },
       ],
     })
