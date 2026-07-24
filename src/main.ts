@@ -1,9 +1,8 @@
 import './style.css'
 import { initWebGPU } from './webgpu/context'
 import { createRenderPipeline } from './webgpu/renderPipeline'
-import { createComputePipeline } from './webgpu/computePipeline'
 import { Field } from './sim/field'
-import incrementWGSL from './shaders/increment.wgsl?raw'
+import { SplatPass } from './sim/splat'
 
 const SIM_WIDTH = 512
 const SIM_HEIGHT = 512
@@ -34,28 +33,26 @@ async function main() {
   }
 
   const renderPipeline = createRenderPipeline(device, format)
-  const incrementPipeline = createComputePipeline(device, incrementWGSL)
+  const splatPass = new SplatPass(device)
 
   const field = new Field(device, SIM_WIDTH, SIM_HEIGHT)
   const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
 
+  // Splat is additive, so we only apply it once into an otherwise-static field.
+  {
+    const encoder = device.createCommandEncoder()
+    splatPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, {
+      x: SIM_WIDTH / 2,
+      y: SIM_HEIGHT / 2,
+      radius: 80,
+      strength: 1,
+      color: [0.9, 0.3, 0.1, 1],
+    })
+    device.queue.submit([encoder.finish()])
+  }
+
   function frame() {
     const encoder = device.createCommandEncoder()
-
-    const computeBindGroup = device.createBindGroup({
-      layout: incrementPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: field.read.createView() },
-        { binding: 1, resource: field.write.createView() },
-      ],
-    })
-    const computePass = encoder.beginComputePass()
-    computePass.setPipeline(incrementPipeline)
-    computePass.setBindGroup(0, computeBindGroup)
-    computePass.dispatchWorkgroups(Math.ceil(SIM_WIDTH / 8), Math.ceil(SIM_HEIGHT / 8))
-    computePass.end()
-
-    field.swap()
 
     const renderBindGroup = device.createBindGroup({
       layout: renderPipeline.getBindGroupLayout(0),
