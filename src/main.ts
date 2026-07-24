@@ -3,9 +3,12 @@ import { initWebGPU } from './webgpu/context'
 import { createRenderPipeline } from './webgpu/renderPipeline'
 import { Field } from './sim/field'
 import { SplatPass } from './sim/splat'
+import { AdvectPass } from './sim/advect'
 
 const SIM_WIDTH = 512
 const SIM_HEIGHT = 512
+const DT = 1 / 60
+const ANGULAR_SPEED = 1.5
 
 const canvas = document.querySelector<HTMLCanvasElement>('#fluid-canvas')!
 const fallback = document.querySelector<HTMLDivElement>('#webgpu-fallback')!
@@ -34,17 +37,19 @@ async function main() {
 
   const renderPipeline = createRenderPipeline(device, format)
   const splatPass = new SplatPass(device)
+  const advectPass = new AdvectPass(device)
 
   const field = new Field(device, SIM_WIDTH, SIM_HEIGHT)
   const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
 
   // Splat is additive, so we only apply it once into an otherwise-static field.
+  // Placed off-center so the rotation (velocity is zero at the center) is visible.
   {
     const encoder = device.createCommandEncoder()
     splatPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, {
-      x: SIM_WIDTH / 2,
-      y: SIM_HEIGHT / 2,
-      radius: 80,
+      x: SIM_WIDTH * 0.7,
+      y: SIM_HEIGHT * 0.5,
+      radius: 60,
       strength: 1,
       color: [0.9, 0.3, 0.1, 1],
     })
@@ -53,6 +58,8 @@ async function main() {
 
   function frame() {
     const encoder = device.createCommandEncoder()
+
+    advectPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, { dt: DT, angularSpeed: ANGULAR_SPEED })
 
     const renderBindGroup = device.createBindGroup({
       layout: renderPipeline.getBindGroupLayout(0),
