@@ -5,6 +5,8 @@ import testVelocityFieldsWGSL from '../shaders/testVelocityFields.wgsl?raw'
 export class DivergenceDebug {
   readonly rotationDivergenceView: GPUTextureView
   readonly radialDivergenceView: GPUTextureView
+  readonly rotationDivergenceTexture: GPUTexture
+  readonly radialDivergenceTexture: GPUTexture
 
   constructor(device: GPUDevice, width: number, height: number) {
     const divergencePipeline = createComputePipeline(device, divergenceWGSL)
@@ -18,6 +20,8 @@ export class DivergenceDebug {
 
     this.rotationDivergenceView = rotationDivergence.createView()
     this.radialDivergenceView = radialDivergence.createView()
+    this.rotationDivergenceTexture = rotationDivergence
+    this.radialDivergenceTexture = radialDivergence
 
     const workgroupsX = Math.ceil(width / 8)
     const workgroupsY = Math.ceil(height / 8)

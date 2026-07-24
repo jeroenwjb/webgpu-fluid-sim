@@ -6,6 +6,8 @@ import { SplatPass } from './sim/splat'
 import { AdvectPass } from './sim/advect'
 import { DiffusionPass } from './sim/diffusion'
 import { DivergenceDebug } from './sim/divergenceDebug'
+import { PressureDebug } from './sim/pressureDebug'
+import { ProjectionDebug } from './sim/projectionDebug'
 
 const SIM_WIDTH = 512
 const SIM_HEIGHT = 512
@@ -48,14 +50,16 @@ async function main() {
   const advectPass = new AdvectPass(device)
   const diffusionPass = new DiffusionPass(device, SIM_WIDTH, SIM_HEIGHT)
   const divergenceDebug = new DivergenceDebug(device, SIM_WIDTH, SIM_HEIGHT)
+  const pressureDebug = new PressureDebug(device, SIM_WIDTH, SIM_HEIGHT)
+  const projectionDebug = new ProjectionDebug(device, SIM_WIDTH, SIM_HEIGHT)
 
   const field = new Field(device, SIM_WIDTH, SIM_HEIGHT)
   const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
 
-  let debugMode: 1 | 2 | 3 = 1
+  let debugMode: 1 | 2 | 3 | 4 | 5 = 1
   window.addEventListener('keydown', (e) => {
-    if (e.key === '1' || e.key === '2' || e.key === '3') {
-      debugMode = Number(e.key) as 1 | 2 | 3
+    if (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5') {
+      debugMode = Number(e.key) as 1 | 2 | 3 | 4 | 5
     }
   })
 
@@ -88,7 +92,11 @@ async function main() {
         ? field.read.createView()
         : debugMode === 2
           ? divergenceDebug.rotationDivergenceView
-          : divergenceDebug.radialDivergenceView
+          : debugMode === 3
+            ? divergenceDebug.radialDivergenceView
+            : debugMode === 4
+              ? pressureDebug.pressureView
+              : projectionDebug.divergenceAfterView
 
     const renderBindGroup = device.createBindGroup({
       layout: renderPipeline.getBindGroupLayout(0),

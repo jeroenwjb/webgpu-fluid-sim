@@ -14,5 +14,10 @@ fn radial(@builtin(global_invocation_id) id: vec3u) {
   let coord = id.xy;
   let dims = vec2f(textureDimensions(outputTex));
   let offset = vec2f(coord) - dims * 0.5;
-  textureStore(outputTex, coord, vec4f(offset, 0.0, 1.0));
+  // Gaussian falloff so the outward push decays to ~zero at the boundary
+  // (net-zero flux out of the domain -> a well-posed test for zero-flux boundaries).
+  let radius = min(dims.x, dims.y) * 0.2;
+  let falloff = exp(-dot(offset, offset) / (radius * radius));
+  let velocity = offset * falloff;
+  textureStore(outputTex, coord, vec4f(velocity, 0.0, 1.0));
 }

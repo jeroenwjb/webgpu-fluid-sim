@@ -19,6 +19,6 @@ export function createStorageTexture(
   return device.createTexture({
     size: { width, height },
     format,
-    usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
   })
 }
