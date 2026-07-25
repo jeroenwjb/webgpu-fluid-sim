@@ -16,7 +16,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
   let velocity = textureLoad(velocityTex, coord, 0).xy;
   let previousPos = pos - velocity * params.dt;
-  let previousUV = previousPos / dims;
+  let previousUV = (previousPos + 0.5) / dims;
   let value = textureSampleLevel(sourceTex, linearSampler, previousUV, 0.0);
 
   textureStore(outputTex, coord, value);
