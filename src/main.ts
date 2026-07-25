@@ -10,11 +10,18 @@ import { PressureDebug } from './sim/pressureDebug'
 import { ProjectionDebug } from './sim/projectionDebug'
 import { ProjectionPass } from './sim/projection'
 import { BoundaryPass } from './sim/boundary'
+import { PointerTracker } from './input/pointer'
 
 const SIM_WIDTH = 512
 const SIM_HEIGHT = 512
 const DT = 1 / 60
 const PROJECTION_ITERATIONS = 20
+
+// Pointer injection: drag speed (texels/frame) scales the force, so slow drags nudge and
+// fast flicks push hard.
+const SPLAT_RADIUS = 25
+const VELOCITY_FORCE = 6
+const DYE_AMOUNT = 0.6
 
 // alpha/rBeta for the Jacobi diffusion solve: alpha = dx^2 / (viscosity * dt), rBeta = 1 / (alpha + 4).
 // NOTE: larger alpha (= smaller viscosity) means LESS smoothing, since the update
@@ -35,6 +42,15 @@ const VELOCITY_DIFFUSION_ITERATIONS = 20
 
 const canvas = document.querySelector<HTMLCanvasElement>('#fluid-canvas')!
 const fallback = document.querySelector<HTMLDivElement>('#webgpu-fallback')!
+
+/** Fully saturated hue -> RGB, so successive strokes cycle through vivid colors. */
+function hueToRgb(h: number): [number, number, number] {
+  const f = (n: number) => {
+    const k = (n + h * 6) % 6
+    return Math.max(0, Math.min(1, Math.min(k, 4 - k, 1)))
+  }
+  return [f(5), f(3), f(1)]
+}
 
 function showFallback() {
   canvas.hidden = true
@@ -79,30 +95,33 @@ async function main() {
     }
   })
 
-  // Seed the dye and velocity fields once with off-center splats (both additive, so a single
-  // application each is enough). The velocity splat gives the self-advecting field an initial
-  // push to evolve from.
-  {
-    const encoder = device.createCommandEncoder()
-    splatPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, {
-      x: SIM_WIDTH * 0.7,
-      y: SIM_HEIGHT * 0.5,
-      radius: 60,
-      strength: 1,
-      color: [0.9, 0.3, 0.1, 1],
-    })
-    splatPass.apply(encoder, velocityField, SIM_WIDTH, SIM_HEIGHT, {
-      x: SIM_WIDTH * 0.7,
-      y: SIM_HEIGHT * 0.5,
-      radius: 80,
-      strength: 1,
-      color: [-90, 75, 0, 0],
-    })
-    device.queue.submit([encoder.finish()])
-  }
+  const pointer = new PointerTracker(canvas, SIM_WIDTH, SIM_HEIGHT)
+  let hue = 0
 
   function frame() {
     const encoder = device.createCommandEncoder()
+
+    // Add sources first (matches Stam's "add source before diffuse/advect" ordering).
+    const input = pointer.consume()
+    if (input.isDown && input.moved) {
+      hue = (hue + 0.005) % 1
+      const [r, g, b] = hueToRgb(hue)
+
+      splatPass.apply(encoder, velocityField, SIM_WIDTH, SIM_HEIGHT, {
+        x: input.x,
+        y: input.y,
+        radius: SPLAT_RADIUS,
+        strength: VELOCITY_FORCE,
+        color: [input.dx, input.dy, 0, 0],
+      })
+      splatPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, {
+        x: input.x,
+        y: input.y,
+        radius: SPLAT_RADIUS,
+        strength: DYE_AMOUNT,
+        color: [r, g, b, 1],
+      })
+    }
 
     diffusionPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, {
       alpha: DIFFUSION_ALPHA,
