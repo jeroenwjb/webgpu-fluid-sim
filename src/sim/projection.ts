@@ -2,7 +2,10 @@ import { createComputePipeline, createStorageTexture } from '../webgpu/computePi
 import divergenceWGSL from '../shaders/divergence.wgsl?raw'
 import jacobiWGSL from '../shaders/jacobi.wgsl?raw'
 import gradientSubtractWGSL from '../shaders/gradientSubtract.wgsl?raw'
+import { RingPool } from '../webgpu/ringPool'
 import { Field } from './field'
+
+const POOL_SIZE = 2 // one projection per frame, plus slack
 
 export interface ProjectParams {
   iterations: number
@@ -15,6 +18,7 @@ export class ProjectionPass {
   private gradientSubtractPipeline: GPUComputePipeline
   private pressureField: Field
   private uniformBuffer: GPUBuffer
+  private divergenceTextures: RingPool<GPUTexture>
 
   constructor(device: GPUDevice, width: number, height: number) {
     this.device = device
@@ -26,6 +30,7 @@ export class ProjectionPass {
     // very first frame) rather than reset to zero every call - converges faster since pressure
     // doesn't change drastically frame to frame.
     this.pressureField = new Field(device, width, height)
+    this.divergenceTextures = new RingPool(POOL_SIZE, () => createStorageTexture(device, width, height))
 
     // Poisson pressure equation ∇²p = div, discretized with the compact Laplacian:
     // (pL + pR + pU + pD - 4p) = div  ->  p = (neighbors - div) / 4  ->  alpha=-1, rBeta=1/4.
@@ -36,12 +41,17 @@ export class ProjectionPass {
     device.queue.writeBuffer(this.uniformBuffer, 0, new Float32Array([-1, 0.25]))
   }
 
+  /** Frees pooled resources; call when the sim is reallocated at a new resolution. */
+  destroy(): void {
+    this.divergenceTextures.destroy((texture) => texture.destroy())
+  }
+
   apply(encoder: GPUCommandEncoder, velocityField: Field, width: number, height: number, params: ProjectParams): void {
     const workgroupsX = Math.ceil(width / 8)
     const workgroupsY = Math.ceil(height / 8)
 
-    // Fresh per-call so two projections recorded into one encoder can't clobber each other.
-    const divergenceTex = createStorageTexture(this.device, width, height)
+    // Pooled: distinct slot per call within a frame, reused across frames.
+    const divergenceTex = this.divergenceTextures.next()
 
     const dispatch = (
       pipeline: GPUComputePipeline,

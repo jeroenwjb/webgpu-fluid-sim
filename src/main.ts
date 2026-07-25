@@ -156,6 +156,8 @@ async function main() {
 
     // Fields are dropped rather than resampled - the dye clears, but resizes are rare and
     // it refills as soon as you drag again.
+    diffusionPass.destroy()
+    projectionPass.destroy()
     diffusionPass = new DiffusionPass(device, simWidth, simHeight)
     projectionPass = new ProjectionPass(device, simWidth, simHeight)
     field = new Field(device, simWidth, simHeight)

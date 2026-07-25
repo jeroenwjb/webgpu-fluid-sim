@@ -1,6 +1,10 @@
 import { createComputePipeline } from '../webgpu/computePipeline'
 import splatWGSL from '../shaders/splat.wgsl?raw'
+import { UniformRing } from '../webgpu/ringPool'
 import type { Field } from './field'
+
+// Velocity and dye are splatted once each per frame; slack for future callers.
+const POOL_SIZE = 4
 
 export interface SplatParams {
   x: number
@@ -13,23 +17,23 @@ export interface SplatParams {
 export class SplatPass {
   private device: GPUDevice
   private pipeline: GPUComputePipeline
+  private uniforms: UniformRing
 
   constructor(device: GPUDevice) {
     this.device = device
     this.pipeline = createComputePipeline(device, splatWGSL)
+    // Pooled, not shared: queue.writeBuffer() takes effect at submit time, so one shared
+    // buffer would let a later call's params clobber an earlier one in the same encoder.
+    // Unlike the other passes these genuinely change per frame, but only while dragging.
+    this.uniforms = new UniformRing(device, POOL_SIZE, 32)
+  }
+
+  destroy(): void {
+    this.uniforms.destroy()
   }
 
   apply(encoder: GPUCommandEncoder, field: Field, width: number, height: number, params: SplatParams): void {
-    // A fresh buffer per call: queue.writeBuffer() takes effect at submit time, so a single
-    // shared buffer would let a later call's params clobber an earlier one recorded into the
-    // same encoder.
-    const uniformBuffer = this.device.createBuffer({
-      size: 32, // vec2f position + f32 radius + f32 strength + vec4f color
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    })
-    this.device.queue.writeBuffer(
-      uniformBuffer,
-      0,
+    const uniformBuffer = this.uniforms.write(
       new Float32Array([
         params.x,
         params.y,

@@ -1,6 +1,10 @@
 import { createComputePipeline } from '../webgpu/computePipeline'
 import advectWGSL from '../shaders/advect.wgsl?raw'
+import { UniformRing } from '../webgpu/ringPool'
 import type { Field } from './field'
+
+// Velocity and dye are each advected once per frame; slack for future callers.
+const POOL_SIZE = 4
 
 export interface AdvectParams {
   dt: number
@@ -12,11 +16,20 @@ export class AdvectPass {
   private device: GPUDevice
   private pipeline: GPUComputePipeline
   private sampler: GPUSampler
+  private uniforms: UniformRing
 
   constructor(device: GPUDevice) {
     this.device = device
     this.pipeline = createComputePipeline(device, advectWGSL)
     this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
+    // Pooled, not shared: velocity and dye advection use different dissipation in the same
+    // encoder, and queue.writeBuffer() only lands at submit time. These params are constant
+    // frame to frame, so the ring's dirty check makes the uploads stop after a few frames.
+    this.uniforms = new UniformRing(device, POOL_SIZE, 8) // f32 dt + f32 dissipation
+  }
+
+  destroy(): void {
+    this.uniforms.destroy()
   }
 
   // velocityField determines the backward trace; sourceField is the field being carried
@@ -29,14 +42,7 @@ export class AdvectPass {
     height: number,
     params: AdvectParams,
   ): void {
-    // Per-call buffer: velocity and dye advection use different dissipation in the same
-    // encoder, and queue.writeBuffer() only lands at submit time - a shared buffer would give
-    // both passes whichever value was written last.
-    const uniformBuffer = this.device.createBuffer({
-      size: 8, // f32 dt + f32 dissipation
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    })
-    this.device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([params.dt, params.dissipation]))
+    const uniformBuffer = this.uniforms.write(new Float32Array([params.dt, params.dissipation]))
 
     const bindGroup = this.device.createBindGroup({
       layout: this.pipeline.getBindGroupLayout(0),

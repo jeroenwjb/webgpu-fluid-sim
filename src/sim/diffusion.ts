@@ -1,6 +1,10 @@
 import { createComputePipeline } from '../webgpu/computePipeline'
 import jacobiWGSL from '../shaders/jacobi.wgsl?raw'
+import { RingPool, UniformRing } from '../webgpu/ringPool'
 import type { Field } from './field'
+
+// Dye and velocity each diffuse once per frame; a little slack for future callers.
+const POOL_SIZE = 4
 
 export interface DiffuseParams {
   alpha: number
@@ -11,29 +15,35 @@ export interface DiffuseParams {
 export class DiffusionPass {
   private device: GPUDevice
   private pipeline: GPUComputePipeline
-  private format: GPUTextureFormat
+  private uniforms: UniformRing
+  private sourceTextures: RingPool<GPUTexture>
 
-  constructor(device: GPUDevice, _width: number, _height: number, format: GPUTextureFormat = 'rgba16float') {
+  constructor(device: GPUDevice, width: number, height: number, format: GPUTextureFormat = 'rgba16float') {
     this.device = device
     this.pipeline = createComputePipeline(device, jacobiWGSL)
-    this.format = format
+
+    // Pooled rather than allocated per call: the snapshot texture is full-size, so allocating
+    // one per call churned megabytes per frame.
+    this.uniforms = new UniformRing(device, POOL_SIZE, 8) // f32 alpha + f32 rBeta
+    this.sourceTextures = new RingPool(POOL_SIZE, () =>
+      device.createTexture({
+        size: { width, height },
+        format,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      }),
+    )
+  }
+
+  /** Frees pooled resources; call when the sim is reallocated at a new resolution. */
+  destroy(): void {
+    this.uniforms.destroy()
+    this.sourceTextures.destroy((texture) => texture.destroy())
   }
 
   apply(encoder: GPUCommandEncoder, field: Field, width: number, height: number, params: DiffuseParams): void {
-    // Fresh per-call resources: queue.writeBuffer() lands at submit time and the snapshot
-    // texture is written by the encoder, so sharing either across calls recorded into the
-    // same encoder would let a later call clobber an earlier one.
-    const uniformBuffer = this.device.createBuffer({
-      size: 8, // f32 alpha + f32 rBeta
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    })
-    this.device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([params.alpha, params.rBeta]))
+    const uniformBuffer = this.uniforms.write(new Float32Array([params.alpha, params.rBeta]))
 
-    const sourceTexture = this.device.createTexture({
-      size: { width, height },
-      format: this.format,
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    })
+    const sourceTexture = this.sourceTextures.next()
 
     // Snapshot the field's current value as the fixed source term (b) for every iteration.
     encoder.copyTextureToTexture({ texture: field.read }, { texture: sourceTexture }, { width, height })
