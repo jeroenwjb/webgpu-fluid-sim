@@ -10,6 +10,7 @@ import { PressureDebug } from './sim/pressureDebug'
 import { ProjectionDebug } from './sim/projectionDebug'
 import { ProjectionPass } from './sim/projection'
 import { BoundaryPass } from './sim/boundary'
+import { VorticityPass } from './sim/vorticity'
 import { PointerTracker } from './input/pointer'
 import { Stats } from './stats'
 import { GpuProfiler } from './webgpu/gpuProfiler'
@@ -33,6 +34,10 @@ const DIFFUSION_VISCOSITY = 0.5
 const DIFFUSION_ALPHA = 1 / (DIFFUSION_VISCOSITY * DT)
 const DIFFUSION_RBETA = 1 / (DIFFUSION_ALPHA + 4)
 const DIFFUSION_ITERATIONS = 5
+
+// Puts back the small vortices semi-Lagrangian advection smears away. Too high and it adds
+// energy faster than diffusion removes it.
+const VORTICITY_STRENGTH = 12
 
 // Damps checkerboard noise rather than modelling viscosity, so it runs stronger than the dye's.
 const VELOCITY_DIFFUSION_VISCOSITY = 2
@@ -102,6 +107,7 @@ async function main() {
   // Rebuilt on resize.
   let diffusionPass = new DiffusionPass(device, simWidth, simHeight)
   let projectionPass = new ProjectionPass(device, simWidth, simHeight)
+  let vorticityPass = new VorticityPass(device, simWidth, simHeight)
   let field = new Field(device, simWidth, simHeight)
   let velocityField = new Field(device, simWidth, simHeight)
 
@@ -114,6 +120,7 @@ async function main() {
         'diffuse dye',
         'diffuse vel',
         'advect vel',
+        'vorticity',
         'project',
         'boundary',
         'advect dye',
@@ -143,8 +150,10 @@ async function main() {
     // Dropped rather than resampled: the dye clears, but resizes are rare.
     diffusionPass.destroy()
     projectionPass.destroy()
+    vorticityPass.destroy()
     diffusionPass = new DiffusionPass(device, simWidth, simHeight)
     projectionPass = new ProjectionPass(device, simWidth, simHeight)
+    vorticityPass = new VorticityPass(device, simWidth, simHeight)
     field = new Field(device, simWidth, simHeight)
     velocityField = new Field(device, simWidth, simHeight)
 
@@ -216,6 +225,14 @@ async function main() {
       dissipation: VELOCITY_DISSIPATION,
     })
     profiler?.end(encoder, 'advect vel')
+
+    // Before projection - the force adds divergence that projection then removes.
+    profiler?.begin(encoder, 'vorticity')
+    vorticityPass.apply(encoder, velocityField, simWidth, simHeight, {
+      strength: VORTICITY_STRENGTH,
+      dt: DT,
+    })
+    profiler?.end(encoder, 'vorticity')
 
     profiler?.begin(encoder, 'project')
     projectionPass.apply(encoder, velocityField, simWidth, simHeight, { iterations: PROJECTION_ITERATIONS })
