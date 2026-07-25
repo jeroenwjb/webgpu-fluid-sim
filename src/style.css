@@ -37,6 +37,34 @@ body {
   display: none;
 }
 
+#legend {
+  position: fixed;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.35rem;
+  background: rgba(0, 0, 0, 0.45);
+  color: #d8e6e8;
+  font: 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  pointer-events: none;
+  user-select: none;
+}
+
+#legend[hidden] {
+  display: none;
+}
+
+/* Matches the ramp in colorizeSigned.wgsl. */
+#legend-ramp {
+  width: 10rem;
+  height: 0.6rem;
+  border-radius: 0.15rem;
+  background: linear-gradient(to right, rgb(64, 140, 255), rgb(0, 0, 0), rgb(255, 89, 51));
+}
+
 #webgpu-fallback {
   position: fixed;
   inset: 0;

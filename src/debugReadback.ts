@@ -42,6 +42,36 @@ export async function logTextureRow(
   console.log(`[${label}] red channel samples (every 32px):`, samples)
 }
 
+/** Reads one texel as RGBA floats. */
+export async function readSingleTexel(
+  device: GPUDevice,
+  texture: GPUTexture,
+  x = 0,
+  y = 0,
+): Promise<[number, number, number, number]> {
+  const bytesPerRow = 256 // must be a multiple of 256
+  const buffer = device.createBuffer({
+    size: bytesPerRow,
+    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  })
+
+  const encoder = device.createCommandEncoder()
+  encoder.copyTextureToBuffer({ texture, origin: { x, y, z: 0 } }, { buffer, bytesPerRow }, { width: 1, height: 1 })
+  device.queue.submit([encoder.finish()])
+
+  await buffer.mapAsync(GPUMapMode.READ)
+  const bits = new Uint16Array(buffer.getMappedRange())
+  const rgba: [number, number, number, number] = [
+    decodeFloat16(bits[0]),
+    decodeFloat16(bits[1]),
+    decodeFloat16(bits[2]),
+    decodeFloat16(bits[3]),
+  ]
+  buffer.unmap()
+  buffer.destroy()
+  return rgba
+}
+
 export async function logTexelRGBA(
   device: GPUDevice,
   texture: GPUTexture,

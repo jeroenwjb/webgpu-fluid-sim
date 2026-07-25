@@ -5,9 +5,8 @@ import { Field } from './sim/field'
 import { SplatPass } from './sim/splat'
 import { AdvectPass } from './sim/advect'
 import { DiffusionPass } from './sim/diffusion'
-import { DivergenceDebug } from './sim/divergenceDebug'
-import { PressureDebug } from './sim/pressureDebug'
-import { ProjectionDebug } from './sim/projectionDebug'
+import { DebugView, DEBUG_FIELDS } from './sim/debugView'
+import { Legend } from './legend'
 import { ProjectionPass } from './sim/projection'
 import { BoundaryPass } from './sim/boundary'
 import { VorticityPass } from './sim/vorticity'
@@ -25,7 +24,7 @@ const VELOCITY_FORCE = 6 // scaled by drag speed
 const DYE_AMOUNT = 0.12
 
 // Splatting is additive, so dye needs a fade or it saturates to white.
-const DYE_DISSIPATION = 0.99
+const DYE_DISSIPATION = 0.995
 const VELOCITY_DISSIPATION = 1
 
 // alpha = 1 / (viscosity * dt), rBeta = 1 / (alpha + 4).
@@ -48,6 +47,11 @@ const VELOCITY_DIFFUSION_ITERATIONS = 20
 const canvas = document.querySelector<HTMLCanvasElement>('#fluid-canvas')!
 const fallback = document.querySelector<HTMLDivElement>('#webgpu-fallback')!
 const statsElement = document.querySelector<HTMLDivElement>('#stats')!
+const legend = new Legend(
+  document.querySelector<HTMLDivElement>('#legend')!,
+  document.querySelector<HTMLSpanElement>('#legend-min')!,
+  document.querySelector<HTMLSpanElement>('#legend-max')!,
+)
 
 /** Rounded to the 8x8 workgroup size. */
 function simSizeForCanvas(): { width: number; height: number } {
@@ -99,12 +103,8 @@ async function main() {
 
   let { width: simWidth, height: simHeight } = simSizeForCanvas()
 
-  // One-shot and display-only, so they keep their original size across resizes.
-  const divergenceDebug = new DivergenceDebug(device, simWidth, simHeight)
-  const pressureDebug = new PressureDebug(device, simWidth, simHeight)
-  const projectionDebug = new ProjectionDebug(device, simWidth, simHeight)
-
   // Rebuilt on resize.
+  let debugView = new DebugView(device, simWidth, simHeight)
   let diffusionPass = new DiffusionPass(device, simWidth, simHeight)
   let projectionPass = new ProjectionPass(device, simWidth, simHeight)
   let vorticityPass = new VorticityPass(device, simWidth, simHeight)
@@ -128,7 +128,9 @@ async function main() {
       ])
     : null
   const pointer = new PointerTracker(canvas, simWidth, simHeight)
-  const updateSimDetail = () => stats.setDetail(`sim ${simWidth}x${simHeight}`)
+
+  let debugField = DEBUG_FIELDS[0]
+  const updateSimDetail = () => stats.setDetail(`sim ${simWidth}x${simHeight}   view: ${debugField}`)
   updateSimDetail()
 
   let resizePending = false
@@ -151,6 +153,8 @@ async function main() {
     diffusionPass.destroy()
     projectionPass.destroy()
     vorticityPass.destroy()
+    debugView.destroy()
+    debugView = new DebugView(device, simWidth, simHeight)
     diffusionPass = new DiffusionPass(device, simWidth, simHeight)
     projectionPass = new ProjectionPass(device, simWidth, simHeight)
     vorticityPass = new VorticityPass(device, simWidth, simHeight)
@@ -161,10 +165,11 @@ async function main() {
     updateSimDetail()
   }
 
-  let debugMode: 1 | 2 | 3 | 4 | 5 = 1
   window.addEventListener('keydown', (e) => {
-    if (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5') {
-      debugMode = Number(e.key) as 1 | 2 | 3 | 4 | 5
+    const index = Number(e.key) - 1
+    if (index >= 0 && index < DEBUG_FIELDS.length) {
+      debugField = DEBUG_FIELDS[index]
+      updateSimDetail()
     }
     if (e.key.toLowerCase() === 'p') stats.toggle()
   })
@@ -234,13 +239,18 @@ async function main() {
     })
     profiler?.end(encoder, 'vorticity')
 
+    // Walls before projection as well as after: with free-slip everywhere the Poisson problem
+    // only has a solution if total divergence sums to zero, which needs no flow through the
+    // walls. Otherwise the solve grows a large-scale ramp instead of converging.
+    profiler?.begin(encoder, 'boundary')
+    boundaryPass.apply(encoder, velocityField, simWidth, simHeight)
+    profiler?.end(encoder, 'boundary')
+
     profiler?.begin(encoder, 'project')
     projectionPass.apply(encoder, velocityField, simWidth, simHeight, { iterations: PROJECTION_ITERATIONS })
     profiler?.end(encoder, 'project')
 
-    profiler?.begin(encoder, 'boundary')
     boundaryPass.apply(encoder, velocityField, simWidth, simHeight)
-    profiler?.end(encoder, 'boundary')
 
     // Density step: carry dye on the now divergence-free velocity.
     profiler?.begin(encoder, 'advect dye')
@@ -250,16 +260,23 @@ async function main() {
     })
     profiler?.end(encoder, 'advect dye')
 
-    const displayView =
-      debugMode === 1
-        ? field.read.createView()
-        : debugMode === 2
-          ? divergenceDebug.rotationDivergenceView
-          : debugMode === 3
-            ? divergenceDebug.radialDivergenceView
-            : debugMode === 4
-              ? pressureDebug.pressureView
-              : projectionDebug.divergenceAfterView
+    const colorized =
+      debugField === 'dye'
+        ? null
+        : debugView.colorize(
+            encoder,
+            debugField,
+            {
+              velocity: velocityField.read,
+              divergence: projectionPass.divergenceTexture,
+              pressure: projectionPass.pressureTexture,
+              curl: vorticityPass.curl,
+            },
+            simWidth,
+            simHeight,
+          )
+    const displayView = colorized ?? field.read.createView()
+    legend.update(device, colorized ? debugView.scaleTexture : null)
 
     const renderBindGroup = device.createBindGroup({
       layout: renderPipeline.getBindGroupLayout(0),
