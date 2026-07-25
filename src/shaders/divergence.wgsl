@@ -1,13 +1,10 @@
 @group(0) @binding(0) var velocityTex: texture_2d<f32>;   // vx in .r, vy in .g
 @group(0) @binding(1) var outputTex: texture_storage_2d<rgba16float, write>;
 
-const VIS_SCALE: f32 = 5.0; // tweak if the visualization is too faint/saturated
+const VIS_SCALE: f32 = 5.0;
 
-// FORWARD differences, deliberately paired with the BACKWARD differences in
-// gradientSubtract.wgsl. Composing the two reproduces exactly the compact Laplacian
-// (p[i+1] - 2p[i] + p[i-1]) that jacobi.wgsl inverts, so the pressure solve is consistent
-// with the operators around it. Central differences (right - left) * 0.5 would skip the
-// center texel and leave an irreducible divergence residual.
+// Forward differences, paired with the backward ones in gradientSubtract.wgsl so the two
+// compose to the compact Laplacian that jacobi.wgsl inverts.
 fn computeDivergence(coord: vec2i, dims: vec2i) -> f32 {
   let maxCoord = dims - vec2i(1, 1);
 
@@ -32,7 +29,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   textureStore(outputTex, coord, color);
 }
 
-// Raw (uncolored) divergence value, for feeding into the pressure solve.
+// Uncoloured, for the pressure solve.
 @compute @workgroup_size(8, 8)
 fn raw(@builtin(global_invocation_id) id: vec3u) {
   let coord = vec2i(id.xy);

@@ -7,8 +7,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let coord = vec2i(id.xy);
   let dims = vec2i(textureDimensions(velocityTex));
 
-  // BACKWARD differences, paired with the FORWARD differences in divergence.wgsl so that
-  // divergence(gradient(p)) is exactly the compact Laplacian that jacobi.wgsl inverts.
+  // Backward differences - see divergence.wgsl for why the pair has to be one-sided.
   let maxCoord = dims - vec2i(1, 1);
 
   let pHere = textureLoad(pressureTex, coord, 0).x;

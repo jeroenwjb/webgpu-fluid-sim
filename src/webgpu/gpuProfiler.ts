@@ -1,17 +1,10 @@
-const READBACK_POOL_SIZE = 3 // enough that a buffer is never still in flight when reused
-const SMOOTHING = 0.1 // EMA factor; raw per-frame GPU timings are noisy
+const READBACK_POOL_SIZE = 3
+const SMOOTHING = 0.1 // raw per-frame timings are noisy
 
 /**
- * Per-stage GPU timing via timestamp queries.
- *
- * WebGPU only exposes timestamps through `timestampWrites` on a pass descriptor. Rather than
- * threading that through every pass class - awkward for DiffusionPass/ProjectionPass, which
- * each run 20-40 passes internally - each scope is bracketed by two empty compute passes that
- * carry the timestamps. Everything encoded between them is measured, so scopes can wrap
- * arbitrary groups of work without those classes knowing about profiling at all.
- *
- * This measures real GPU execution time, unlike wall-clock frame time which vsync pins to the
- * refresh rate.
+ * Per-stage GPU timing. Timestamps can only be written via `timestampWrites` on a pass
+ * descriptor, so rather than threading that through every pass (diffusion and projection run
+ * 20-60 internally), each scope is bracketed by two empty compute passes carrying them.
  */
 export class GpuProfiler {
   private scopeNames: string[]
@@ -42,7 +35,7 @@ export class GpuProfiler {
     }
   }
 
-  /** Smoothed per-scope GPU time in milliseconds, in the order scopes were declared. */
+  /** Smoothed ms per scope, in declaration order. */
   get timings(): { name: string; ms: number }[] {
     return this.scopeNames.map((name) => ({ name, ms: this.results.get(name) ?? 0 }))
   }
@@ -67,7 +60,7 @@ export class GpuProfiler {
       .end()
   }
 
-  /** Records the resolve + copy. Call once per frame, before submitting. */
+  /** Call once per frame, before submitting. */
   resolve(encoder: GPUCommandEncoder): void {
     const slot = this.pool.find((entry) => !entry.inUse && entry.buffer.mapState === 'unmapped')
     if (!slot) {
@@ -81,10 +74,7 @@ export class GpuProfiler {
     encoder.copyBufferToBuffer(this.resolveBuffer, 0, slot.buffer, 0, this.queryCount * 8)
   }
 
-  /**
-   * Maps and reads the resolved timings. Must run AFTER queue.submit() - mapping a buffer
-   * that is still referenced by an unsubmitted command buffer is a validation error.
-   */
+  /** Must run after queue.submit() - mapping a buffer an unsubmitted encoder still references throws. */
   readback(): void {
     const slot = this.pending
     this.pending = null
@@ -99,14 +89,14 @@ export class GpuProfiler {
         this.scopeNames.forEach((name, i) => {
           const start = times[i * 2]
           const end = times[i * 2 + 1]
-          if (end <= start) return // scope not encoded this frame
-          const ms = Number(end - start) / 1e6 // timestamps are nanoseconds
+          if (end <= start) return // scope wasn't encoded this frame
+          const ms = Number(end - start) / 1e6 // nanoseconds
           const previous = this.results.get(name)
           this.results.set(name, previous === undefined ? ms : previous + (ms - previous) * SMOOTHING)
         })
       })
       .catch(() => {
-        // Device lost or buffer destroyed - drop the sample.
+        // Device lost or buffer destroyed - drop it.
       })
       .finally(() => {
         slot.inUse = false

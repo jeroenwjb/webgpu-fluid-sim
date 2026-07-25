@@ -1,5 +1,4 @@
-// Temporary diagnostic: reads back a row of texels from an rgba16float texture and
-// logs the red channel, so results can be verified numerically instead of visually.
+// Reads rgba16float texels back to the console, for checking fields numerically.
 
 function decodeFloat16(bits: number): number {
   const sign = (bits & 0x8000) !== 0 ? -1 : 1

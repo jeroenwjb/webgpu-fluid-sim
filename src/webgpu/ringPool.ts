@@ -1,16 +1,8 @@
 /**
- * Fixed-size ring of reusable GPU resources.
+ * Reusable scratch resources, one slot per call. A pass can't share a single scratch texture
+ * across calls in the same encoder, but allocating per call churns memory.
  *
- * Passes can't share a single scratch buffer/texture across calls recorded into the same
- * encoder - `queue.writeBuffer()` only lands at submit time, and encoder writes land in
- * submission order, so a later call would clobber an earlier one. Allocating fresh resources
- * per call avoids that but churns memory (full-size textures every frame).
- *
- * A ring gives each call within a frame a distinct slot while reusing across frames. Reuse is
- * safe because queue operations are ordered: next frame's write is sequenced after the prior
- * frame's submitted work that read it.
- *
- * `size` must exceed the maximum number of calls a single pass makes per frame.
+ * `size` must exceed the calls a pass makes per frame.
  */
 export class RingPool<T> {
   private items: T[]
@@ -33,13 +25,8 @@ export class RingPool<T> {
 }
 
 /**
- * Ring of uniform buffers that skips redundant uploads.
- *
- * Most pass parameters (diffusion alpha/rBeta, advection dt/dissipation) are identical every
- * frame, so re-uploading them each frame is pure waste. Each slot remembers its last contents
- * and only writes when they actually change: constant parameters settle after one pass through
- * the ring and then transfer nothing, while genuinely dynamic ones (splat position/colour)
- * still upload only when they change.
+ * Same idea, but for uniforms, and skips the upload when a slot already holds the same values.
+ * Most params are constant every frame, so after the ring fills they stop uploading entirely.
  */
 export class UniformRing {
   private device: GPUDevice
@@ -58,7 +45,6 @@ export class UniformRing {
     this.cached = Array.from({ length: size }, () => null)
   }
 
-  /** Returns a buffer holding `values`, uploading only if this slot doesn't already match. */
   write(values: Float32Array): GPUBuffer {
     const slot = this.index
     this.index = (this.index + 1) % this.buffers.length

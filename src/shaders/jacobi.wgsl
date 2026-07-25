@@ -4,8 +4,9 @@ struct JacobiParams {
 }
 
 @group(0) @binding(0) var<uniform> params: JacobiParams;
-@group(0) @binding(1) var xTex: texture_2d<f32>;   // current best-guess field (ping-pongs each iteration)
-@group(0) @binding(2) var bTex: texture_2d<f32>;   // fixed source term (stays constant across iterations)
+// Shared by diffusion and the pressure solve - only alpha/rBeta differ.
+@group(0) @binding(1) var xTex: texture_2d<f32>;  // ping-pongs each iteration
+@group(0) @binding(2) var bTex: texture_2d<f32>;  // source term, fixed across iterations
 @group(0) @binding(3) var outputTex: texture_storage_2d<rgba16float, write>;
 
 @compute @workgroup_size(8, 8)

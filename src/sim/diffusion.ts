@@ -3,7 +3,6 @@ import jacobiWGSL from '../shaders/jacobi.wgsl?raw'
 import { RingPool, UniformRing } from '../webgpu/ringPool'
 import type { Field } from './field'
 
-// Dye and velocity each diffuse once per frame; a little slack for future callers.
 const POOL_SIZE = 4
 
 export interface DiffuseParams {
@@ -22,9 +21,7 @@ export class DiffusionPass {
     this.device = device
     this.pipeline = createComputePipeline(device, jacobiWGSL)
 
-    // Pooled rather than allocated per call: the snapshot texture is full-size, so allocating
-    // one per call churned megabytes per frame.
-    this.uniforms = new UniformRing(device, POOL_SIZE, 8) // f32 alpha + f32 rBeta
+    this.uniforms = new UniformRing(device, POOL_SIZE, 8) // alpha + rBeta
     this.sourceTextures = new RingPool(POOL_SIZE, () =>
       device.createTexture({
         size: { width, height },
@@ -34,7 +31,7 @@ export class DiffusionPass {
     )
   }
 
-  /** Frees pooled resources; call when the sim is reallocated at a new resolution. */
+  /** Call before reallocating at a new resolution. */
   destroy(): void {
     this.uniforms.destroy()
     this.sourceTextures.destroy((texture) => texture.destroy())
@@ -45,7 +42,7 @@ export class DiffusionPass {
 
     const sourceTexture = this.sourceTextures.next()
 
-    // Snapshot the field's current value as the fixed source term (b) for every iteration.
+    // Snapshot as the source term b, fixed across all iterations.
     encoder.copyTextureToTexture({ texture: field.read }, { texture: sourceTexture }, { width, height })
 
     for (let i = 0; i < params.iterations; i++) {

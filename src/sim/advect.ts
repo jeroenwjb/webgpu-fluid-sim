@@ -3,12 +3,11 @@ import advectWGSL from '../shaders/advect.wgsl?raw'
 import { UniformRing } from '../webgpu/ringPool'
 import type { Field } from './field'
 
-// Velocity and dye are each advected once per frame; slack for future callers.
 const POOL_SIZE = 4
 
 export interface AdvectParams {
   dt: number
-  /** Per-frame decay of the advected value; 1 = none. */
+  /** Per-frame decay; 1 = none. */
   dissipation: number
 }
 
@@ -22,18 +21,14 @@ export class AdvectPass {
     this.device = device
     this.pipeline = createComputePipeline(device, advectWGSL)
     this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
-    // Pooled, not shared: velocity and dye advection use different dissipation in the same
-    // encoder, and queue.writeBuffer() only lands at submit time. These params are constant
-    // frame to frame, so the ring's dirty check makes the uploads stop after a few frames.
-    this.uniforms = new UniformRing(device, POOL_SIZE, 8) // f32 dt + f32 dissipation
+    this.uniforms = new UniformRing(device, POOL_SIZE, 8) // dt + dissipation
   }
 
   destroy(): void {
     this.uniforms.destroy()
   }
 
-  // velocityField determines the backward trace; sourceField is the field being carried
-  // (pass the same Field for both to self-advect a velocity field).
+  // Pass the same Field twice to self-advect velocity.
   apply(
     encoder: GPUCommandEncoder,
     velocityField: Field,

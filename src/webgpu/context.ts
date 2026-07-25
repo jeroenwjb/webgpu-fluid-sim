@@ -2,9 +2,8 @@ export interface WebGPUContext {
   device: GPUDevice
   context: GPUCanvasContext
   format: GPUTextureFormat
-  /** True if `timestamp-query` was available and enabled, so GPU timings can be measured. */
   hasTimestamps: boolean
-  /** Resizes the swapchain to the canvas's current CSS size. Returns false if unchanged. */
+  /** Returns false if the size was already correct. */
   resizeToDisplay: () => boolean
 }
 
@@ -12,7 +11,7 @@ export async function initWebGPU(canvas: HTMLCanvasElement): Promise<WebGPUConte
   const adapter = await navigator.gpu.requestAdapter()
   if (!adapter) throw new Error('No suitable GPUAdapter found.')
 
-  // Optional: without it we fall back to wall-clock timing, which vsync pins to the refresh rate.
+  // Optional feature - without it the profiler overlay just shows nothing.
   const hasTimestamps = adapter.features.has('timestamp-query')
   const device = await adapter.requestDevice({
     requiredFeatures: hasTimestamps ? ['timestamp-query'] : [],

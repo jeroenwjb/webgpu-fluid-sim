@@ -5,7 +5,7 @@ import gradientSubtractWGSL from '../shaders/gradientSubtract.wgsl?raw'
 import { RingPool } from '../webgpu/ringPool'
 import { Field } from './field'
 
-const POOL_SIZE = 2 // one projection per frame, plus slack
+const POOL_SIZE = 2
 
 export interface ProjectParams {
   iterations: number
@@ -26,14 +26,11 @@ export class ProjectionPass {
     this.jacobiPipeline = createComputePipeline(device, jacobiWGSL)
     this.gradientSubtractPipeline = createComputePipeline(device, gradientSubtractWGSL)
 
-    // Pressure is warm-started from the previous frame's solution (still zero-initialized on the
-    // very first frame) rather than reset to zero every call - converges faster since pressure
-    // doesn't change drastically frame to frame.
+    // Kept across frames - warm-starting converges much faster than restarting from zero.
     this.pressureField = new Field(device, width, height)
     this.divergenceTextures = new RingPool(POOL_SIZE, () => createStorageTexture(device, width, height))
 
-    // Poisson pressure equation ∇²p = div, discretized with the compact Laplacian:
-    // (pL + pR + pU + pD - 4p) = div  ->  p = (neighbors - div) / 4  ->  alpha=-1, rBeta=1/4.
+    // Laplacian(p) = div  ->  p = (neighbours - div) / 4
     this.uniformBuffer = device.createBuffer({
       size: 8,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -41,7 +38,7 @@ export class ProjectionPass {
     device.queue.writeBuffer(this.uniformBuffer, 0, new Float32Array([-1, 0.25]))
   }
 
-  /** Frees pooled resources; call when the sim is reallocated at a new resolution. */
+  /** Call before reallocating at a new resolution. */
   destroy(): void {
     this.divergenceTextures.destroy((texture) => texture.destroy())
   }
@@ -50,7 +47,6 @@ export class ProjectionPass {
     const workgroupsX = Math.ceil(width / 8)
     const workgroupsY = Math.ceil(height / 8)
 
-    // Pooled: distinct slot per call within a frame, reused across frames.
     const divergenceTex = this.divergenceTextures.next()
 
     const dispatch = (

@@ -1,21 +1,18 @@
+/** All coordinates are in sim texel space. */
 export interface PointerState {
   isDown: boolean
-  /** Position in sim texel space. */
   x: number
   y: number
-  /** Movement since the last frame, in sim texels. */
+  /** Movement since the last frame. */
   dx: number
   dy: number
-  /** True if the pointer moved since the last frame while held down. */
   moved: boolean
 }
 
 /**
- * Tracks pointer position/delta in simulation texel space. Deliberately WebGPU-unaware:
- * it only mutates plain state, which the simulation loop samples once per frame.
+ * Pointer state for the sim loop to read once per frame. Kept WebGPU-unaware.
  *
- * Pointer Events unify mouse/touch/pen, so touch needs no separate path (the canvas also
- * sets `touch-action: none` so dragging doesn't scroll the page).
+ * Pointer Events cover mouse/touch/pen, so touch needs no separate path.
  */
 export class PointerTracker {
   private state: PointerState = { isDown: false, x: 0, y: 0, dx: 0, dy: 0, moved: false }
@@ -37,15 +34,13 @@ export class PointerTracker {
     window.addEventListener('pointercancel', this.onPointerUp)
   }
 
-  /** Called when the sim grid is reallocated (e.g. on window resize). */
   setSimSize(simWidth: number, simHeight: number): void {
     this.simWidth = simWidth
     this.simHeight = simHeight
-    // Stale coords are in the old grid's space; drop them so the next move starts clean.
-    this.hasLastPosition = false
+    this.hasLastPosition = false // old coords are in the previous grid's space
   }
 
-  /** Reads the current state, then clears the per-frame delta. */
+  /** Reads state and clears the per-frame delta. */
   consume(): PointerState {
     const snapshot = { ...this.state }
     this.state.dx = 0
@@ -56,8 +51,7 @@ export class PointerTracker {
 
   private toSimCoords(e: PointerEvent): { x: number; y: number } {
     const rect = this.canvas.getBoundingClientRect()
-    // Texture row 0 renders at the top of the screen (fullscreenQuad.wgsl flips V), and
-    // clientY also grows downward, so no Y flip is needed here.
+    // No Y flip needed: fullscreenQuad.wgsl already flips V, so texture row 0 is at the top.
     return {
       x: ((e.clientX - rect.left) / rect.width) * this.simWidth,
       y: ((e.clientY - rect.top) / rect.height) * this.simHeight,
@@ -69,7 +63,7 @@ export class PointerTracker {
     this.state.isDown = true
     this.state.x = x
     this.state.y = y
-    // Seed last position on press so the first move can't produce a huge bogus delta.
+    // Seed on press, otherwise the first move produces a huge delta.
     this.lastX = x
     this.lastY = y
     this.hasLastPosition = true
@@ -87,7 +81,7 @@ export class PointerTracker {
       return
     }
 
-    // Accumulate, since several pointermove events can arrive between frames.
+    // Accumulate - several pointermove events can arrive per frame.
     this.state.dx += x - this.lastX
     this.state.dy += y - this.lastY
     this.state.x = x

@@ -3,7 +3,6 @@ import splatWGSL from '../shaders/splat.wgsl?raw'
 import { UniformRing } from '../webgpu/ringPool'
 import type { Field } from './field'
 
-// Velocity and dye are splatted once each per frame; slack for future callers.
 const POOL_SIZE = 4
 
 export interface SplatParams {
@@ -22,9 +21,6 @@ export class SplatPass {
   constructor(device: GPUDevice) {
     this.device = device
     this.pipeline = createComputePipeline(device, splatWGSL)
-    // Pooled, not shared: queue.writeBuffer() takes effect at submit time, so one shared
-    // buffer would let a later call's params clobber an earlier one in the same encoder.
-    // Unlike the other passes these genuinely change per frame, but only while dragging.
     this.uniforms = new UniformRing(device, POOL_SIZE, 32)
   }
 

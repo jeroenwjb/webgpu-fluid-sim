@@ -28,7 +28,7 @@ export class PressureDebug {
     const workgroupsX = Math.ceil(width / 8)
     const workgroupsY = Math.ceil(height / 8)
 
-    // Poisson pressure equation: p = (divergence + sum_of_neighbors(p)) / 4 -> alpha=1, rBeta=1/4.
+    // Laplacian(p) = div  ->  p = (neighbours - div) / 4
     const uniformBuffer = device.createBuffer({
       size: 8,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -56,7 +56,6 @@ export class PressureDebug {
       { binding: 1, resource: divergenceTex.createView() },
     ])
 
-    // p starts at zero (freshly created Field), divergence is the fixed source term.
     for (let i = 0; i < PRESSURE_ITERATIONS; i++) {
       dispatch(jacobiPipeline, [
         { binding: 0, resource: { buffer: uniformBuffer } },
