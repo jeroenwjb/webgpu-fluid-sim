@@ -8,17 +8,30 @@ import { DiffusionPass } from './sim/diffusion'
 import { DivergenceDebug } from './sim/divergenceDebug'
 import { PressureDebug } from './sim/pressureDebug'
 import { ProjectionDebug } from './sim/projectionDebug'
+import { ProjectionPass } from './sim/projection'
+import { BoundaryPass } from './sim/boundary'
 
 const SIM_WIDTH = 512
 const SIM_HEIGHT = 512
 const DT = 1 / 60
-const ANGULAR_SPEED = 1.5
+const PROJECTION_ITERATIONS = 20
 
 // alpha/rBeta for the Jacobi diffusion solve: alpha = dx^2 / (viscosity * dt), rBeta = 1 / (alpha + 4).
-const DIFFUSION_VISCOSITY = 8
+// NOTE: larger alpha (= smaller viscosity) means LESS smoothing, since the update
+// `(neighbors + alpha*source) * rBeta` weights the original value more heavily.
+// Dye only needs gentle softening - too much and it dissolves within a second or two.
+const DIFFUSION_VISCOSITY = 0.1
 const DIFFUSION_ALPHA = 1 / (DIFFUSION_VISCOSITY * DT)
 const DIFFUSION_RBETA = 1 / (DIFFUSION_ALPHA + 4)
-const DIFFUSION_ITERATIONS = 25
+const DIFFUSION_ITERATIONS = 20
+
+// Velocity diffusion exists mainly to damp high-frequency "checkerboard" noise (a known
+// artifact of the collocated-grid central-difference div/grad scheme) rather than to model
+// real viscosity - it needs to be noticeably stronger than the dye's to suppress the stripes.
+const VELOCITY_DIFFUSION_VISCOSITY = 2
+const VELOCITY_DIFFUSION_ALPHA = 1 / (VELOCITY_DIFFUSION_VISCOSITY * DT)
+const VELOCITY_DIFFUSION_RBETA = 1 / (VELOCITY_DIFFUSION_ALPHA + 4)
+const VELOCITY_DIFFUSION_ITERATIONS = 20
 
 const canvas = document.querySelector<HTMLCanvasElement>('#fluid-canvas')!
 const fallback = document.querySelector<HTMLDivElement>('#webgpu-fallback')!
@@ -52,8 +65,11 @@ async function main() {
   const divergenceDebug = new DivergenceDebug(device, SIM_WIDTH, SIM_HEIGHT)
   const pressureDebug = new PressureDebug(device, SIM_WIDTH, SIM_HEIGHT)
   const projectionDebug = new ProjectionDebug(device, SIM_WIDTH, SIM_HEIGHT)
+  const projectionPass = new ProjectionPass(device, SIM_WIDTH, SIM_HEIGHT)
+  const boundaryPass = new BoundaryPass(device)
 
   const field = new Field(device, SIM_WIDTH, SIM_HEIGHT)
+  const velocityField = new Field(device, SIM_WIDTH, SIM_HEIGHT)
   const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' })
 
   let debugMode: 1 | 2 | 3 | 4 | 5 = 1
@@ -63,8 +79,9 @@ async function main() {
     }
   })
 
-  // Splat is additive, so we only apply it once into an otherwise-static field.
-  // Placed off-center so the rotation (velocity is zero at the center) is visible.
+  // Seed the dye and velocity fields once with off-center splats (both additive, so a single
+  // application each is enough). The velocity splat gives the self-advecting field an initial
+  // push to evolve from.
   {
     const encoder = device.createCommandEncoder()
     splatPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, {
@@ -73,6 +90,13 @@ async function main() {
       radius: 60,
       strength: 1,
       color: [0.9, 0.3, 0.1, 1],
+    })
+    splatPass.apply(encoder, velocityField, SIM_WIDTH, SIM_HEIGHT, {
+      x: SIM_WIDTH * 0.7,
+      y: SIM_HEIGHT * 0.5,
+      radius: 80,
+      strength: 1,
+      color: [-90, 75, 0, 0],
     })
     device.queue.submit([encoder.finish()])
   }
@@ -85,7 +109,19 @@ async function main() {
       rBeta: DIFFUSION_RBETA,
       iterations: DIFFUSION_ITERATIONS,
     })
-    advectPass.apply(encoder, field, SIM_WIDTH, SIM_HEIGHT, { dt: DT, angularSpeed: ANGULAR_SPEED })
+
+    // Velocity step: diffuse (damps checkerboard noise), self-advect, then project to remove divergence.
+    diffusionPass.apply(encoder, velocityField, SIM_WIDTH, SIM_HEIGHT, {
+      alpha: VELOCITY_DIFFUSION_ALPHA,
+      rBeta: VELOCITY_DIFFUSION_RBETA,
+      iterations: VELOCITY_DIFFUSION_ITERATIONS,
+    })
+    advectPass.apply(encoder, velocityField, velocityField, SIM_WIDTH, SIM_HEIGHT, { dt: DT })
+    projectionPass.apply(encoder, velocityField, SIM_WIDTH, SIM_HEIGHT, { iterations: PROJECTION_ITERATIONS })
+    boundaryPass.apply(encoder, velocityField, SIM_WIDTH, SIM_HEIGHT)
+
+    // Density step: advect dye by the real (now divergence-free) velocity field.
+    advectPass.apply(encoder, velocityField, field, SIM_WIDTH, SIM_HEIGHT, { dt: DT })
 
     const displayView =
       debugMode === 1

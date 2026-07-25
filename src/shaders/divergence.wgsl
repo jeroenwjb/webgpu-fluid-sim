@@ -3,14 +3,19 @@
 
 const VIS_SCALE: f32 = 5.0; // tweak if the visualization is too faint/saturated
 
+// FORWARD differences, deliberately paired with the BACKWARD differences in
+// gradientSubtract.wgsl. Composing the two reproduces exactly the compact Laplacian
+// (p[i+1] - 2p[i] + p[i-1]) that jacobi.wgsl inverts, so the pressure solve is consistent
+// with the operators around it. Central differences (right - left) * 0.5 would skip the
+// center texel and leave an irreducible divergence residual.
 fn computeDivergence(coord: vec2i, dims: vec2i) -> f32 {
-  let left  = textureLoad(velocityTex, clamp(coord + vec2i(-1, 0), vec2i(0), dims - vec2i(1, 1)), 0).x;
-  let right  = textureLoad(velocityTex, clamp(coord + vec2i(1, 0), vec2i(0), dims - vec2i(1, 1)), 0).x;
+  let maxCoord = dims - vec2i(1, 1);
 
-  let up  = textureLoad(velocityTex, clamp(coord + vec2i(0, 1), vec2i(0), dims - vec2i(1, 1)), 0).y;
-  let down  = textureLoad(velocityTex, clamp(coord + vec2i(0, -1), vec2i(0), dims - vec2i(1, 1)), 0).y;
+  let here = textureLoad(velocityTex, coord, 0);
+  let right = textureLoad(velocityTex, clamp(coord + vec2i(1, 0), vec2i(0), maxCoord), 0).x;
+  let up = textureLoad(velocityTex, clamp(coord + vec2i(0, 1), vec2i(0), maxCoord), 0).y;
 
-  return ((right - left) + (up - down)) * 0.5;
+  return (right - here.x) + (up - here.y);
 }
 
 @compute @workgroup_size(8, 8)

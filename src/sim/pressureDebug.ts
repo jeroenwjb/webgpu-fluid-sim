@@ -33,7 +33,7 @@ export class PressureDebug {
       size: 8,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     })
-    device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([1, 0.25]))
+    device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([-1, 0.25]))
 
     const encoder = device.createCommandEncoder()
 

@@ -11,6 +11,7 @@ const PRESSURE_ITERATIONS = 40
 export class ProjectionDebug {
   readonly divergenceAfterView: GPUTextureView
   readonly divergenceAfterTexture: GPUTexture
+  readonly divergenceBeforeTexture: GPUTexture
 
   constructor(device: GPUDevice, width: number, height: number) {
     const bakeRadialPipeline = createComputePipeline(device, testVelocityFieldsWGSL, 'radial')
@@ -28,6 +29,7 @@ export class ProjectionDebug {
 
     this.divergenceAfterView = divergenceAfterVis.createView()
     this.divergenceAfterTexture = divergenceAfter
+    this.divergenceBeforeTexture = divergenceBefore
 
     const workgroupsX = Math.ceil(width / 8)
     const workgroupsY = Math.ceil(height / 8)
@@ -37,7 +39,7 @@ export class ProjectionDebug {
       size: 8,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     })
-    device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([1, 0.25]))
+    device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([-1, 0.25]))
 
     const encoder = device.createCommandEncoder()
 

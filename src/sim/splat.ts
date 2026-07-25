@@ -13,20 +13,22 @@ export interface SplatParams {
 export class SplatPass {
   private device: GPUDevice
   private pipeline: GPUComputePipeline
-  private uniformBuffer: GPUBuffer
 
   constructor(device: GPUDevice) {
     this.device = device
     this.pipeline = createComputePipeline(device, splatWGSL)
-    this.uniformBuffer = device.createBuffer({
-      size: 32, // vec2f position + f32 radius + f32 strength + vec4f color
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    })
   }
 
   apply(encoder: GPUCommandEncoder, field: Field, width: number, height: number, params: SplatParams): void {
+    // A fresh buffer per call: queue.writeBuffer() takes effect at submit time, so a single
+    // shared buffer would let a later call's params clobber an earlier one recorded into the
+    // same encoder.
+    const uniformBuffer = this.device.createBuffer({
+      size: 32, // vec2f position + f32 radius + f32 strength + vec4f color
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    })
     this.device.queue.writeBuffer(
-      this.uniformBuffer,
+      uniformBuffer,
       0,
       new Float32Array([
         params.x,
@@ -43,7 +45,7 @@ export class SplatPass {
     const bindGroup = this.device.createBindGroup({
       layout: this.pipeline.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: { buffer: this.uniformBuffer } },
+        { binding: 0, resource: { buffer: uniformBuffer } },
         { binding: 1, resource: field.read.createView() },
         { binding: 2, resource: field.write.createView() },
       ],

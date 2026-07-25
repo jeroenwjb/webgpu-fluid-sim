@@ -16,7 +16,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let color = textureLoad(readTex, coord, 0);
   let dist = distance(vec2f(coord), splat.position);
   let falloff = exp(-dist*dist / (splat.radius*splat.radius));
-  let newColor = clamp(color + falloff *splat.strength * splat.color, vec4f(0), vec4f(1));
+  let newColor = color + falloff * splat.strength * splat.color;
 
   textureStore(writeTex, coord, newColor);
 }
