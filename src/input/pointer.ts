@@ -37,6 +37,14 @@ export class PointerTracker {
     window.addEventListener('pointercancel', this.onPointerUp)
   }
 
+  /** Called when the sim grid is reallocated (e.g. on window resize). */
+  setSimSize(simWidth: number, simHeight: number): void {
+    this.simWidth = simWidth
+    this.simHeight = simHeight
+    // Stale coords are in the old grid's space; drop them so the next move starts clean.
+    this.hasLastPosition = false
+  }
+
   /** Reads the current state, then clears the per-frame delta. */
   consume(): PointerState {
     const snapshot = { ...this.state }

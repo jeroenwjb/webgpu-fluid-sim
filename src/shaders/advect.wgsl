@@ -1,5 +1,8 @@
 struct AdvectParams {
   dt: f32,
+  // Per-frame decay applied to the advected value. 1.0 leaves it untouched (velocity);
+  // slightly below 1.0 makes dye fade so repeated strokes don't accumulate to white.
+  dissipation: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: AdvectParams;
@@ -19,5 +22,5 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let previousUV = (previousPos + 0.5) / dims;
   let value = textureSampleLevel(sourceTex, linearSampler, previousUV, 0.0);
 
-  textureStore(outputTex, coord, value);
+  textureStore(outputTex, coord, value * params.dissipation);
 }

@@ -19,6 +19,24 @@ body {
   touch-action: none;
 }
 
+#stats {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.35rem;
+  background: rgba(0, 0, 0, 0.45);
+  color: #d8e6e8;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  pointer-events: none;
+  user-select: none;
+}
+
+#stats[hidden] {
+  display: none;
+}
+
 #webgpu-fallback {
   position: fixed;
   inset: 0;
