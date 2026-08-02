@@ -72,13 +72,30 @@ export class Stats {
             ? 'stalling outside the GPU'
             : `vsync-limited, GPU using ${budgetShare.toFixed(0)}% of the budget`
       lines.push(`${total.ms.toFixed(2)} ms GPU  ${verdict}`, '')
-      const labelWidth = Math.max(...stages.map((s) => s.name.length))
-      for (const stage of stages) {
+
+      // Some GPUs don't timestamp the marker passes where they were encoded, and every scope
+      // ends up measured from the start of the frame instead of from its own beginning: times
+      // rise monotonically down the list and the last one equals the total, which real stage
+      // costs never do. The stages are encoded back to back, so one scope's end is the next
+      // one's start and differencing recovers the durations.
+      const rising = stages.every((stage, i) => i === 0 || stage.ms > stages[i - 1].ms)
+      const cumulative =
+        stages.length >= 3 && rising && stages[stages.length - 1].ms >= total.ms * 0.9
+      const shown = cumulative
+        ? stages.map((stage, i) => ({
+            name: stage.name,
+            ms: i === 0 ? stage.ms : stage.ms - stages[i - 1].ms,
+          }))
+        : stages
+
+      const labelWidth = Math.max(...shown.map((s) => s.name.length))
+      for (const stage of shown) {
         const stageShare = total.ms > 0 ? (stage.ms / total.ms) * 100 : 0
         lines.push(
           `  ${stage.name.padEnd(labelWidth)}  ${stage.ms.toFixed(2).padStart(5)} ms  ${stageShare.toFixed(0).padStart(3)}%`,
         )
       }
+      if (cumulative) lines.push('  (differenced: this GPU reports cumulative timestamps)')
     }
 
     if (this.residual !== null) lines.push('', `residual ${this.residual.toExponential(2)}`)
