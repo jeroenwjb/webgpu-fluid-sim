@@ -1,5 +1,5 @@
 @group(0) @binding(0) var velocityTex: texture_2d<f32>;   // vx in .r, vy in .g
-@group(0) @binding(1) var outputTex: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1) var outputTex: texture_storage_2d<r32float, write>;
 
 const VIS_SCALE: f32 = 5.0;
 

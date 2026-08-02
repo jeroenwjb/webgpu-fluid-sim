@@ -8,11 +8,17 @@ import { DiffusionPass } from './sim/diffusion'
 import { DebugView, DEBUG_FIELDS } from './sim/debugView'
 import { Legend } from './legend'
 import { ProjectionPass } from './sim/projection'
+import { JacobiSolver } from './sim/solvers/jacobiSolver'
+import { RedBlackSolver } from './sim/solvers/redBlackSolver'
+import { MultigridSolver } from './sim/solvers/multigridSolver'
+import type { PressureSolver } from './sim/solvers/pressureSolver'
 import { BoundaryPass } from './sim/boundary'
 import { VorticityPass } from './sim/vorticity'
 import { PointerTracker } from './input/pointer'
 import { Stats } from './stats'
 import { GpuProfiler } from './webgpu/gpuProfiler'
+import { readSingleTexel } from './debugReadback'
+import { Benchmark, summarise, formatReport } from './benchmark'
 
 // Other axis follows the canvas aspect so the fluid never stretches. Independent of display res.
 const SIM_MAX_AXIS = 512
@@ -106,7 +112,20 @@ async function main() {
   // Rebuilt on resize.
   let debugView = new DebugView(device, simWidth, simHeight)
   let diffusionPass = new DiffusionPass(device, simWidth, simHeight)
-  let projectionPass = new ProjectionPass(device, simWidth, simHeight)
+  // Best first, so the demo runs on multigrid and `S` walks down to the weaker solvers.
+  const solverFactories: ((d: GPUDevice, w: number, h: number) => PressureSolver)[] = [
+    (d, w, h) => new MultigridSolver(d, w, h),
+    // Same sweep count as Jacobi: matched sweeps halves the residual for ~1.6x the cost.
+    (d) => new RedBlackSolver(d, PROJECTION_ITERATIONS),
+    (d) => new JacobiSolver(d, PROJECTION_ITERATIONS),
+  ]
+  let solverIndex = 0
+  let projectionPass = new ProjectionPass(
+    device,
+    simWidth,
+    simHeight,
+    solverFactories[solverIndex](device, simWidth, simHeight),
+  )
   let vorticityPass = new VorticityPass(device, simWidth, simHeight)
   let field = new Field(device, simWidth, simHeight)
   let velocityField = new Field(device, simWidth, simHeight)
@@ -130,8 +149,17 @@ async function main() {
   const pointer = new PointerTracker(canvas, simWidth, simHeight)
 
   let debugField = DEBUG_FIELDS[0]
-  const updateSimDetail = () => stats.setDetail(`sim ${simWidth}x${simHeight}   view: ${debugField}`)
+  const updateSimDetail = () =>
+    stats.setDetail(`sim ${simWidth}x${simHeight}   view: ${debugField}   solver: ${projectionPass.solverName}`)
   updateSimDetail()
+
+  stats.setControls([
+    ['drag', 'inject dye and velocity'],
+    [`1-${DEBUG_FIELDS.length}`, `show ${DEBUG_FIELDS.join(' / ')}`],
+    ...(solverFactories.length > 1 ? [['S', 'switch pressure solver'] as [string, string]] : []),
+    ['P', 'toggle this overlay'],
+    ...(profiler ? [['B', 'run benchmark (results in console)'] as [string, string]] : []),
+  ])
 
   let resizePending = false
   window.addEventListener('resize', () => {
@@ -156,7 +184,12 @@ async function main() {
     debugView.destroy()
     debugView = new DebugView(device, simWidth, simHeight)
     diffusionPass = new DiffusionPass(device, simWidth, simHeight)
-    projectionPass = new ProjectionPass(device, simWidth, simHeight)
+    projectionPass = new ProjectionPass(
+      device,
+      simWidth,
+      simHeight,
+      solverFactories[solverIndex](device, simWidth, simHeight),
+    )
     vorticityPass = new VorticityPass(device, simWidth, simHeight)
     field = new Field(device, simWidth, simHeight)
     velocityField = new Field(device, simWidth, simHeight)
@@ -172,9 +205,41 @@ async function main() {
       updateSimDetail()
     }
     if (e.key.toLowerCase() === 'p') stats.toggle()
+    if (e.key.toLowerCase() === 'b' && profiler && !benchmark.active) {
+      field = new Field(device, simWidth, simHeight)
+      velocityField = new Field(device, simWidth, simHeight)
+      profiler.startRecording(benchmark.measureFrames)
+      benchmark.start()
+    }
+    if (e.key.toLowerCase() === 's' && solverFactories.length > 1) {
+      solverIndex = (solverIndex + 1) % solverFactories.length
+      projectionPass.setSolver(solverFactories[solverIndex](device, simWidth, simHeight))
+      updateSimDetail()
+    }
   })
 
+  const benchmark = new Benchmark()
   let hue = 0
+  let frameCount = 0
+  let residualPending = false
+
+  async function finishBenchmark() {
+    const timings = await profiler?.finishRecording()
+
+    // Quality half of the comparison: a solver that is fast but converges worse isn't better.
+    let residual: number | null = null
+    const encoder = device.createCommandEncoder()
+    const residualTexture = projectionPass.measureResidual(encoder, simWidth, simHeight)
+    device.queue.submit([encoder.finish()])
+    if (residualTexture) {
+      const [, meanSquare] = await readSingleTexel(device, residualTexture)
+      residual = Math.sqrt(Math.max(meanSquare, 0))
+    }
+
+    updateSimDetail()
+    if (!timings) return
+    console.log(formatReport(projectionPass.solverName, summarise(timings), residual))
+  }
 
   function frame() {
     if (resizePending) applyResize()
@@ -184,7 +249,10 @@ async function main() {
     profiler?.begin(encoder, 'total')
 
     // Add sources first (matches Stam's "add source before diffuse/advect" ordering).
-    const input = pointer.consume()
+    const scripted = benchmark.active ? benchmark.input(simWidth, simHeight) : null
+    const input = scripted
+      ? { isDown: true, moved: true, ...scripted }
+      : pointer.consume()
     if (input.isDown && input.moved) {
       hue = (hue + 0.005) % 1
       const [r, g, b] = hueToRgb(hue)
@@ -247,8 +315,24 @@ async function main() {
     profiler?.end(encoder, 'boundary')
 
     profiler?.begin(encoder, 'project')
-    projectionPass.apply(encoder, velocityField, simWidth, simHeight, { iterations: PROJECTION_ITERATIONS })
+    projectionPass.apply(encoder, velocityField, simWidth, simHeight)
     profiler?.end(encoder, 'project')
+
+    // Sampled occasionally - the readback is async and only needs to be roughly current.
+    // Skipped while benchmarking so no readback perturbs the timings.
+    frameCount++
+    if (!benchmark.active && frameCount % 30 === 0 && !residualPending) {
+      const residual = projectionPass.measureResidual(encoder, simWidth, simHeight)
+      if (residual) {
+        residualPending = true
+        readSingleTexel(device, residual)
+          .then(([, meanSquare]) => stats.setResidual(Math.sqrt(Math.max(meanSquare, 0))))
+          .catch(() => {})
+          .finally(() => {
+            residualPending = false
+          })
+      }
+    }
 
     boundaryPass.apply(encoder, velocityField, simWidth, simHeight)
 
@@ -303,10 +387,28 @@ async function main() {
     profiler?.end(encoder, 'render')
 
     profiler?.end(encoder, 'total')
-    profiler?.resolve(encoder)
+    if (benchmark.measuring) {
+      profiler?.record(encoder, benchmark.recordIndex)
+    } else if (!benchmark.active) {
+      profiler?.resolve(encoder)
+    }
     device.queue.submit([encoder.finish()])
     // After submit - mapping a buffer an unsubmitted encoder references is a validation error.
-    profiler?.readback()
+    if (!benchmark.active) profiler?.readback()
+
+    if (benchmark.active) {
+      stats.setDetail(`benchmark: ${benchmark.progress}`)
+      const finished = benchmark.advance()
+      if (finished) {
+        finishBenchmark()
+      } else {
+        // Back-to-back instead of vsync-paced: at ~3ms of work per 16.7ms frame the GPU sits
+        // idle most of the time and never holds a boost clock, which was making identical
+        // runs differ by 6x. Waiting on the queue instead keeps it saturated.
+        device.queue.onSubmittedWorkDone().then(frame)
+        return
+      }
+    }
 
     requestAnimationFrame(frame)
   }

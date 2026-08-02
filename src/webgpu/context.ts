@@ -13,6 +13,7 @@ export async function initWebGPU(canvas: HTMLCanvasElement): Promise<WebGPUConte
 
   // Optional feature - without it the profiler overlay just shows nothing.
   const hasTimestamps = adapter.features.has('timestamp-query')
+
   const device = await adapter.requestDevice({
     requiredFeatures: hasTimestamps ? ['timestamp-query'] : [],
   })

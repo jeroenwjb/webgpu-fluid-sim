@@ -18,7 +18,11 @@ export class DebugView {
 
   constructor(device: GPUDevice, width: number, height: number) {
     this.device = device
-    this.signedPipeline = createComputePipeline(device, colorizeSignedWGSL)
+    this.signedPipeline = createComputePipeline(device, colorizeSignedWGSL, 'main', [
+      'texture',
+      'texture',
+      { storage: 'rgba16float' },
+    ])
     this.velocityPipeline = createComputePipeline(device, colorizeVelocityWGSL)
     this.target = createStorageTexture(device, width, height)
     // Mean rather than max: divergence spikes hard at the injection point, and a max-based

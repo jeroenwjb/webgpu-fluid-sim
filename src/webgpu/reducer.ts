@@ -25,7 +25,10 @@ export class Reducer {
 
   constructor(device: GPUDevice, width: number, height: number, mode: ReduceMode = 'average') {
     this.device = device
-    this.pipeline = createComputePipeline(device, SHADERS[mode])
+    this.pipeline = createComputePipeline(device, SHADERS[mode], 'main', [
+      'texture',
+      { storage: 'rgba16float' },
+    ])
 
     let w = width
     let h = height
