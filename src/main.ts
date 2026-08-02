@@ -20,8 +20,8 @@ import { GpuProfiler } from './webgpu/gpuProfiler'
 import { readSingleTexel } from './debugReadback'
 import { Benchmark, summarise, formatReport } from './benchmark'
 
-// Other axis follows the canvas aspect so the fluid never stretches. Independent of display res.
-const SIM_MAX_AXIS = 512
+// Total cells, split by canvas aspect so the fluid never stretches. Independent of display res.
+const SIM_CELL_BUDGET = 512 * 512
 const DT = 1 / 60
 const PROJECTION_ITERATIONS = 60
 
@@ -59,13 +59,21 @@ const legend = new Legend(
   document.querySelector<HTMLSpanElement>('#legend-max')!,
 )
 
-/** Rounded to the 8x8 workgroup size. */
+/**
+ * Solves w*h = budget with w/h = aspect, so cell density and GPU cost stay roughly constant
+ * whatever shape the window is.
+ *
+ * Rounded to 32 rather than the 8x8 workgroup size. Sizes that are only multiples of 8 make
+ * the fluid oscillate on every solver - not yet explained, but 32 divides cleanly for five
+ * multigrid levels and is stable at every window shape I've tried.
+ */
 function simSizeForCanvas(): { width: number; height: number } {
   const aspect = Math.max(canvas.clientWidth, 1) / Math.max(canvas.clientHeight, 1)
-  const width = aspect >= 1 ? SIM_MAX_AXIS : SIM_MAX_AXIS * aspect
-  const height = aspect >= 1 ? SIM_MAX_AXIS / aspect : SIM_MAX_AXIS
-  const round8 = (v: number) => Math.max(8, Math.round(v / 8) * 8)
-  return { width: round8(width), height: round8(height) }
+  const round32 = (v: number) => Math.max(32, Math.round(v / 32) * 32)
+  return {
+    width: round32(Math.sqrt(SIM_CELL_BUDGET * aspect)),
+    height: round32(Math.sqrt(SIM_CELL_BUDGET / aspect)),
+  }
 }
 
 /** Fully saturated hue -> RGB, so strokes cycle through vivid colours. */
@@ -206,8 +214,12 @@ async function main() {
     }
     if (e.key.toLowerCase() === 'p') stats.toggle()
     if (e.key.toLowerCase() === 'b' && profiler && !benchmark.active) {
+      // Every run has to start from the same state, pressure included.
       field = new Field(device, simWidth, simHeight)
       velocityField = new Field(device, simWidth, simHeight)
+      const reset = device.createCommandEncoder()
+      projectionPass.reset(reset)
+      device.queue.submit([reset.finish()])
       profiler.startRecording(benchmark.measureFrames)
       benchmark.start()
     }
@@ -224,13 +236,16 @@ async function main() {
   let residualPending = false
 
   async function finishBenchmark() {
-    const timings = await profiler?.finishRecording()
-
     // Quality half of the comparison: a solver that is fast but converges worse isn't better.
-    let residual: number | null = null
+    // Recorded before any await - the sim keeps running across one, so awaiting first would
+    // measure a state some unpredictable number of frames past the end of the run.
     const encoder = device.createCommandEncoder()
     const residualTexture = projectionPass.measureResidual(encoder, simWidth, simHeight)
     device.queue.submit([encoder.finish()])
+
+    const timings = await profiler?.finishRecording()
+
+    let residual: number | null = null
     if (residualTexture) {
       const [, meanSquare] = await readSingleTexel(device, residualTexture)
       residual = Math.sqrt(Math.max(meanSquare, 0))

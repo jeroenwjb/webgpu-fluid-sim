@@ -1,8 +1,14 @@
-import { createComputePipeline, createStorageTexture, SCALAR_FORMAT } from '../webgpu/computePipeline'
+import {
+  createComputePipeline,
+  createStorageTexture,
+  SCALAR_FORMAT,
+  asScalarShader,
+} from '../webgpu/computePipeline'
 import divergenceWGSL from '../shaders/divergence.wgsl?raw'
 import gradientSubtractWGSL from '../shaders/gradientSubtract.wgsl?raw'
 import subtractMeanWGSL from '../shaders/subtractMean.wgsl?raw'
 import residualWGSL from '../shaders/residual.wgsl?raw'
+import clearWGSL from '../shaders/clear.wgsl?raw'
 import { RingPool } from '../webgpu/ringPool'
 import { Reducer } from '../webgpu/reducer'
 import { dispatch } from '../webgpu/dispatch'
@@ -24,6 +30,9 @@ export class ProjectionPass {
   private divergenceScratch: RingPool<GPUTexture>
   private residualPipeline: GPUComputePipeline
   private residualTexture: GPUTexture
+  private clearPipeline: GPUComputePipeline
+  private width: number
+  private height: number
 
   /** Signed residual field from the last measureResidual() call, for the debug view. */
   get residual(): GPUTexture {
@@ -62,6 +71,11 @@ export class ProjectionPass {
       { storage: 'rgba16float' },
     ])
     this.residualTexture = createStorageTexture(device, width, height)
+    this.clearPipeline = createComputePipeline(device, asScalarShader(clearWGSL), 'main', [
+      { storage: SCALAR_FORMAT },
+    ])
+    this.width = width
+    this.height = height
 
     // Kept across frames - warm-starting converges much faster than restarting from zero.
     this.pressureField = new Field(device, width, height, SCALAR_FORMAT)
@@ -98,6 +112,25 @@ export class ProjectionPass {
       height,
     )
     return this.reducer.reduce(encoder, this.residualTexture)
+  }
+
+  /**
+   * Zeroes the warm-started pressure so a run doesn't inherit the previous one's state. Without
+   * this a benchmark isn't reproducible: the solve starts from stale pressure and the flow is
+   * chaotic enough that the trajectories diverge over a few hundred frames.
+   */
+  reset(encoder: GPUCommandEncoder): void {
+    for (const texture of [this.pressureField.read, this.pressureField.write]) {
+      dispatch(
+        this.device,
+        encoder,
+        this.clearPipeline,
+        [{ binding: 0, resource: texture.createView() }],
+        this.width,
+        this.height,
+      )
+    }
+    this.lastDivergence = null
   }
 
   /** Swaps the solver in place, keeping the warm-started pressure field. */
